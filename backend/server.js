@@ -12,11 +12,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const FRONTEND_DIST = path.join(__dirname, '../frontend/dist');
 
-app.use(express.static(FRONTEND_DIST));
 
-app.get('*', (req, res) => {
-  res.sendFile(path.join(FRONTEND_DIST, 'index.html'));
-});
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
@@ -572,6 +568,12 @@ app.get('/api/img/:token', (req, res) => {
 function toImageToken(url) {
   return `/api/img/${encryptUrl(url)}`;
 }
+
+app.use(express.static(FRONTEND_DIST));
+
+app.get('*', (req, res) => {
+  res.sendFile(path.join(FRONTEND_DIST, 'index.html'));
+});
 
 // ── Warmup: garante que todas as capas estão no Cloudinary ───────────────────
 // 1. Se a capa já está no .image-cache local → faz upload do arquivo
