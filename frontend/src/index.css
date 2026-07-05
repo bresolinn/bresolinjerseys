@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-dark-900 text-white font-body antialiased;
+    background-color: #0a0a0a;
+  }
+
+  ::selection {
+    background-color: #f97316;
+    color: #0a0a0a;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #111111;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #3d3d3d;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #f97316;
+  }
+}
+
+@layer components {
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      #1a1a1a 25%,
+      #2e2e2e 50%,
+      #1a1a1a 75%
+    );
+    background-size: 1000px 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  .card-hover {
+    @apply transition-all duration-300 ease-out;
+  }
+
+  .card-hover:hover {
+    @apply -translate-y-1;
+  }
+
+  .glass {
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .tag {
+    @apply inline-block px-3 py-1 text-xs font-medium tracking-wider uppercase rounded-full;
+    background: rgba(249, 115, 22, 0.15);
+    color: #f97316;
+    border: 1px solid rgba(249, 115, 22, 0.3);
+  }
+}
+
+/* Page transition */
+.page-enter {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.page-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 300ms, transform 300ms;
+}

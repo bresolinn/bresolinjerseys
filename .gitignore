@@ -1,0 +1,4 @@
+node_modules/
+.image-cache/
+*.bat
+.env

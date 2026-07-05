@@ -1,0 +1,7 @@
+{
+  "name": "wenye-jerseys",
+  "scripts": {
+    "build": "cd frontend && npm install && npm run build",
+    "start": "node backend/server.js"
+  }
+}
