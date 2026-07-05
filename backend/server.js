@@ -7,7 +7,7 @@ import crypto from 'crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
@@ -632,9 +632,10 @@ async function warmupCache() {
   console.log(`✅ Cloudinary sincronizado: ${novas} enviadas, ${baixadas} baixadas do Yupoo, ${falhas} falhas.`);
 }
 
+
 app.listen(PORT, () => {
-  console.log(`\n🚀 Wenye Jerseys API rodando em http://localhost:${PORT}`);
-  console.log(`📁 Lendo dados de: ${DATA_ROOT}`);
-  console.log(`☁️  Imagens via Cloudinary CDN (WebP automático)`);
+  console.log(`🚀 Wenye Jerseys API rodando na porta ${PORT}`);
+  console.log(`📁 Lendo dados de: ${ROOT_DIR}`);
+  console.log('☁️  Imagens via Cloudinary CDN (WebP automático)');
   warmupCache();
 });
