@@ -2,7 +2,7 @@
   "name": "wenye-jerseys",
   "type": "module",
   "scripts": {
-    "build": "cd frontend && npm install && npm run build",
+    "build": "npm install && cd frontend && npm install && npm run build",
     "start": "node backend/server.js"
   },
   "dependencies": {
