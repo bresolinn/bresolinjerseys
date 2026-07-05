@@ -635,7 +635,7 @@ async function warmupCache() {
 
 app.listen(PORT, () => {
   console.log(`🚀 Wenye Jerseys API rodando na porta ${PORT}`);
-  console.log(`📁 Lendo dados de: ${ROOT_DIR}`);
+  console.log(`📁 Lendo dados de: ${DATA_ROOT}`);
   console.log('☁️  Imagens via Cloudinary CDN (WebP automático)');
   warmupCache();
 });
