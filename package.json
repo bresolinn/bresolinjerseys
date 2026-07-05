@@ -1,7 +1,12 @@
 {
   "name": "wenye-jerseys",
+  "type": "module",
   "scripts": {
     "build": "cd frontend && npm install && npm run build",
     "start": "node backend/server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2"
   }
 }

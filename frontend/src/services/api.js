@@ -1,4 +1,7 @@
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const BASE_URL =
+  window.location.hostname === 'localhost'
+    ? 'http://localhost:3001'
+    : 'https://bresolinjerseys.onrender.com';
 
 async function get(path) {
   const res = await fetch(`${BASE}${path}`);
