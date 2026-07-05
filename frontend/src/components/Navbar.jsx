@@ -37,7 +37,19 @@ export default function Navbar() {
     timerRef.current = setTimeout(async () => {
       try {
         const r = await api.search(query);
-        setResults(r.slice(0, 8));
+        // Mesma lógica de deduplicação usada na página de busca (SearchPage):
+        // mantém apenas a primeira ocorrência de cada produto (vindo da
+        // categoria de maior prioridade), evitando repetir o mesmo produto
+        // quando ele está cadastrado em mais de uma categoria/subcategoria.
+        const seen = new Set();
+        const unique = [];
+        for (const item of r) {
+          if (!seen.has(item.id)) {
+            seen.add(item.id);
+            unique.push(item);
+          }
+        }
+        setResults(unique.slice(0, 8));
       } finally {
         setSearching(false);
       }
