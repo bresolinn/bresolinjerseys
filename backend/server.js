@@ -119,11 +119,23 @@ function readDirectory(dirPath) {
 // No Render (e outros ambientes sem mtime confiável), esse arquivo é lido.
 const ORDER_FILE = path.join(DATA_ROOT, 'order.json');
 
+/** Normaliza chaves de caminho para usar sempre "/" (Windows salva com "\").
+ *  Sem isso, um order.json gerado no Windows não bate com as chaves
+ *  calculadas no Linux (Render), e a ordenação salva é ignorada. */
+function normalizeKey(key) {
+  return key.split('\\').join('/').split(path.sep).join('/');
+}
+
 /** Lê o índice de ordem salvo, ou retorna objeto vazio */
 function readOrderIndex() {
   try {
     if (fs.existsSync(ORDER_FILE)) {
-      return JSON.parse(fs.readFileSync(ORDER_FILE, 'utf-8'));
+      const raw = JSON.parse(fs.readFileSync(ORDER_FILE, 'utf-8'));
+      const normalized = {};
+      for (const [k, v] of Object.entries(raw)) {
+        normalized[normalizeKey(k)] = v;
+      }
+      return normalized;
     }
   } catch {}
   return {};
@@ -184,14 +196,14 @@ function readDirectoryByDate(dirPath) {
       const sorted = entries.sort((a, b) => b.mtime - a.mtime);
       // Atualiza order.json com a ordem atual
       const index = readOrderIndex();
-      const key = path.relative(DATA_ROOT, dirPath);
+      const key = normalizeKey(path.relative(DATA_ROOT, dirPath));
       index[key] = sorted.map(e => e.name);
       saveOrderIndex(index);
       return sorted;
     } else {
       // Deploy (Render/GitHub): usa order.json salvo
       const index = readOrderIndex();
-      const key = path.relative(DATA_ROOT, dirPath);
+      const key = normalizeKey(path.relative(DATA_ROOT, dirPath));
       const savedOrder = index[key];
       if (savedOrder && savedOrder.length > 0) {
         const byName = Object.fromEntries(entries.map(e => [e.name, e]));
