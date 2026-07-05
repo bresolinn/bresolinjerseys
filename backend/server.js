@@ -3,16 +3,36 @@ import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+
 const app = express();
-const PORT = 3001;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const FRONTEND_DIST = path.join(__dirname, '../frontend/dist');
+
+
+const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-const DATA_ROOT = process.env.DATA_PATH || 'C:\\Users\\gbres\\Documents\\Site Camisas\\Wenye Jerseys';
+const DATA_ROOT = process.env.DATA_PATH || './Wenye Jerseys';
+// ─── CLOUDINARY CONFIG ───────────────────────────────────────────────────────
+const CLOUDINARY_CLOUD = 'dt9t6mgbn';
+const CLOUDINARY_API_KEY = '376977982193685';
+const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_SECRET || '';
+const CDN_BASE = `https://res.cloudinary.com/${CLOUDINARY_CLOUD}/image/upload/f_auto,q_auto`;
+
+/** Converte URL do Yupoo em URL pública do Cloudinary (WebP automático) */
+function toCoverUrl(yupooUrl) {
+  if (!yupooUrl) return '';
+  const publicId = crypto.createHash('md5').update(yupooUrl).digest('hex');
+  return `${CDN_BASE}/${publicId}`;
+}
+
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 function slugify(text) {
   return text
@@ -93,31 +113,39 @@ function readDirectory(dirPath) {
   }
 }
 
-// ─── ORDER CACHE ──────────────────────────────────────────────────────────────
-// A ordenação por data de modificação (mtime) funciona no localhost, mas se perde
-// quando o projeto é clonado/publicado (git não preserva mtimes originais das
-// pastas). Para manter a mesma ordem depois do deploy, salvamos a ordem "correta"
-// (gerada no localhost) em um arquivo JSON committado no repositório, e o
-// servidor passa a usar esse arquivo como fonte de verdade quando ele existir.
-//
-// Para atualizar a ordem: rode `node generate-order-cache.js` no localhost
-// (com os dados na ordem que você quer) e comite o arquivo order-cache.json.
-const ORDER_CACHE_PATH = path.join(__dirname, 'order-cache.json');
-let _orderCache = null;
+// ─── PERSISTÊNCIA DA ORDENAÇÃO ────────────────────────────────────────────────
+// Problema: a ordenação por data de modificação (mtime) funciona no localhost,
+// mas quando o projeto é enviado pro GitHub e clonado no Render, o Git NÃO
+// preserva o mtime original dos arquivos — todos ficam com a data do checkout,
+// embaralhando a ordem. A solução é: na primeira vez que uma pasta é lida,
+// gravamos a ordem atual (calculada por mtime, que aqui ainda está correta)
+// num arquivo .order-manifest.json. Da próxima vez (inclusive no Render),
+// usamos essa ordem salva em vez do mtime, então ela nunca mais muda sozinha.
+const ORDER_MANIFEST_PATH = path.join(DATA_ROOT, '.order-manifest.json');
+let orderManifest = null;
+let orderManifestDirty = false;
 
-function loadOrderCache() {
-  if (_orderCache !== null) return _orderCache;
+function loadOrderManifestFromDisk() {
+  if (orderManifest) return orderManifest;
   try {
-    const raw = fs.readFileSync(ORDER_CACHE_PATH, 'utf-8');
-    _orderCache = JSON.parse(raw);
-    console.log(`📌 order-cache.json carregado (${Object.keys(_orderCache).length} pastas com ordem fixa).`);
+    orderManifest = JSON.parse(fs.readFileSync(ORDER_MANIFEST_PATH, 'utf-8'));
   } catch {
-    _orderCache = {};
+    orderManifest = {};
   }
-  return _orderCache;
+  return orderManifest;
 }
 
-function relKey(dirPath) {
+function saveOrderManifestToDisk() {
+  if (!orderManifestDirty) return;
+  try {
+    fs.writeFileSync(ORDER_MANIFEST_PATH, JSON.stringify(orderManifest, null, 2));
+    orderManifestDirty = false;
+  } catch (e) {
+    console.warn('⚠️  Não foi possível salvar .order-manifest.json:', e.message);
+  }
+}
+
+function getOrderKey(dirPath) {
   return path.relative(DATA_ROOT, dirPath).split(path.sep).join('/');
 }
 
@@ -129,28 +157,40 @@ function readDirectoryByDate(dirPath) {
         const fullPath = path.join(dirPath, e.name);
         const stat = fs.statSync(fullPath);
         return { name: e.name, fullPath, mtime: stat.mtimeMs };
-      });
+      })
+      .sort((a, b) => b.mtime - a.mtime); // fallback: mais recentes primeiro
 
-    const cache = loadOrderCache();
-    const savedOrder = cache[relKey(dirPath)];
+    const manifest = loadOrderManifestFromDisk();
+    const key = getOrderKey(dirPath);
+    const savedOrder = manifest[key];
 
-    if (savedOrder && Array.isArray(savedOrder)) {
-      // Usa a ordem salva. Pastas novas que não estão na lista salva vão para o
-      // final, em ordem alfabética, para não desaparecerem.
-      const indexOf = name => {
-        const i = savedOrder.indexOf(name);
-        return i === -1 ? Infinity : i;
-      };
-      return entries.sort((a, b) => {
-        const ia = indexOf(a.name);
-        const ib = indexOf(b.name);
-        if (ia !== ib) return ia - ib;
-        return a.name.localeCompare(b.name);
-      });
+    if (savedOrder && savedOrder.length) {
+      const remaining = new Map(entries.map(e => [e.name, e]));
+      const ordered = [];
+      for (const name of savedOrder) {
+        const entry = remaining.get(name);
+        if (entry) {
+          ordered.push(entry);
+          remaining.delete(name);
+        }
+      }
+      // Produtos novos (ainda não salvos no manifest) entram no início,
+      // ordenados por data entre si — igual ao comportamento antigo.
+      const newOnes = entries.filter(e => remaining.has(e.name));
+      const finalOrder = [...newOnes, ...ordered];
+
+      if (newOnes.length > 0) {
+        manifest[key] = finalOrder.map(e => e.name);
+        orderManifestDirty = true;
+      }
+
+      return finalOrder;
     }
 
-    // Fallback: comportamento original por data de modificação (mtime)
-    return entries.sort((a, b) => b.mtime - a.mtime); // mais antigos primeiro
+    // Primeira leitura desta pasta: grava a ordem atual para preservá-la.
+    manifest[key] = entries.map(e => e.name);
+    orderManifestDirty = true;
+    return entries;
   } catch {
     return [];
   }
@@ -191,7 +231,8 @@ function buildCatalog() {
               subcategory.products.push({
                 id: slugify(album.name),
                 name: parsed.name || album.name,
-                cover: parsed.images[0],
+                cover: toCoverUrl(parsed.images[0]),
+                _coverSrc: parsed.images[0],
                 images: parsed.images,
               });
             }
@@ -213,7 +254,8 @@ function buildCatalog() {
           category.products.push({
             id: slugify(child.name),
             name: parsed.name || child.name,
-            cover: parsed.images[0],
+            cover: toCoverUrl(parsed.images[0]),
+            _coverSrc: parsed.images[0],
             images: parsed.images,
           });
         }
@@ -223,6 +265,7 @@ function buildCatalog() {
     catalog.categories.push(category);
   }
 
+  saveOrderManifestToDisk();
   return catalog;
 }
 
@@ -291,7 +334,7 @@ app.get('/api/categories/:catSlug/products/:productId', (req, res) => {
   if (!cat) return res.status(404).json({ error: 'Category not found' });
   const product = cat.products.find(p => p.id === req.params.productId);
   if (!product) return res.status(404).json({ error: 'Product not found' });
-  res.json(product);
+  res.json(sanitizeProduct(product));
 });
 
 app.get('/api/categories/:catSlug/subcategories/:subSlug/products/:productId', (req, res) => {
@@ -302,7 +345,7 @@ app.get('/api/categories/:catSlug/subcategories/:subSlug/products/:productId', (
   if (!sub) return res.status(404).json({ error: 'Subcategory not found' });
   const product = sub.products.find(p => p.id === req.params.productId);
   if (!product) return res.status(404).json({ error: 'Product not found' });
-  res.json(product);
+  res.json(sanitizeProduct(product));
 });
 
 app.get('/api/search', (req, res) => {
@@ -324,8 +367,17 @@ app.get('/api/search', (req, res) => {
       }
     }
   }
-  res.json(results);
+  res.json(results.map(p => { const { _coverSrc, ...rest } = p; return rest; }));
 });
+
+/** Remove _coverSrc e criptografa images[] antes de enviar ao cliente */
+function sanitizeProduct(p) {
+  const { _coverSrc, ...rest } = p;
+  return {
+    ...rest,
+    images: (p.images || []).map(url => toImageToken(url)),
+  };
+}
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, dataRoot: DATA_ROOT, exists: fs.existsSync(DATA_ROOT) });
@@ -349,20 +401,8 @@ app.get('/api/debug', (req, res) => {
 // ─── PROXY DE IMAGENS ─────────────────────────────────────────────────────────
 import https from 'https';
 import http from 'http';
-import crypto from 'crypto';
 
-// ── Configuração do Cloudinary ────────────────────────────────────────────────
-const CLOUDINARY_CLOUD = 'dt9t6mgbn';
-const CLOUDINARY_API_KEY = '376977982193685';
-const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_SECRET || '';
-// ⚠️  Nunca coloque o secret diretamente aqui.
-// Defina a variável de ambiente CLOUDINARY_SECRET no seu sistema ou no start.bat:
-//   set CLOUDINARY_SECRET=ZL8fi8nHfYOtqmW9ITR0BND3OzQ
 
-// URL base para servir imagens com conversão automática para WebP e compressão
-// f_auto  → entrega WebP para browsers compatíveis, JPEG para os demais
-// q_auto  → compressão automática inteligente
-const CDN_BASE = `https://res.cloudinary.com/${CLOUDINARY_CLOUD}/image/upload/f_auto,q_auto`;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -377,16 +417,53 @@ function cloudinaryUrl(publicId) {
 }
 
 /** Verifica se a imagem já existe no Cloudinary */
-async function existsInCloudinary(publicId) {
-  return new Promise((resolve) => {
-    const auth = Buffer.from(`${CLOUDINARY_API_KEY}:${CLOUDINARY_API_SECRET}`).toString('base64');
-    const req = https.get(
-      `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/resources/image/upload/${publicId}`,
-      { headers: { Authorization: `Basic ${auth}` } },
-      (res) => resolve(res.statusCode === 200)
-    );
-    req.on('error', () => resolve(false));
-  });
+/** Busca todos os public_ids já existentes no Cloudinary de uma vez só */
+async function fetchExistingInCloudinary() {
+  const existing = new Set();
+  if (!CLOUDINARY_API_SECRET) return existing;
+
+  const auth = Buffer.from(`${CLOUDINARY_API_KEY}:${CLOUDINARY_API_SECRET}`).toString('base64');
+  let nextCursor = null;
+
+  do {
+    const url = nextCursor
+      ? `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/resources/image/upload?max_results=500&next_cursor=${nextCursor}`
+      : `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/resources/image/upload?max_results=500`;
+
+    const data = await new Promise((resolve, reject) => {
+      const req = https.get(url, { headers: { Authorization: `Basic ${auth}` } }, (res) => {
+        let raw = '';
+        res.on('data', chunk => raw += chunk);
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed.error) {
+              console.warn('⚠️  Cloudinary API erro:', parsed.error.message);
+              resolve({ resources: [] });
+            } else {
+              resolve(parsed);
+            }
+          } catch (e) { reject(e); }
+        });
+      });
+      req.on('error', (e) => {
+        console.warn('⚠️  Erro ao buscar lista do Cloudinary:', e.message);
+        resolve({ resources: [] });
+      });
+    });
+
+    const resources = data.resources || [];
+    // Log na primeira página para debug
+    if (existing.size === 0 && resources.length > 0) {
+      console.log('🔍 Exemplos public_id Cloudinary:', resources.slice(0, 3).map(r => r.public_id));
+    }
+    for (const resource of resources) {
+      existing.add(resource.public_id);
+    }
+    nextCursor = data.next_cursor || null;
+  } while (nextCursor);
+
+  return existing;
 }
 
 /** Faz upload de um arquivo local para o Cloudinary via multipart */
@@ -504,27 +581,67 @@ if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 function loadCoverUrls() {
   const catalog = getCatalog();
   for (const cat of catalog.categories) {
-    for (const p of cat.products) if (p.cover) coverUrls.add(p.cover);
+    for (const p of cat.products) if (p._coverSrc) coverUrls.add(p._coverSrc);
     for (const sub of cat.subcategories)
-      for (const p of sub.products) if (p.cover) coverUrls.add(p.cover);
+      for (const p of sub.products) if (p._coverSrc) coverUrls.add(p._coverSrc);
+  }
+}
+
+// ── Token de URL opaco ───────────────────────────────────────────────────────
+// Criptografa/descriptografa URLs do Yupoo para que nunca apareçam no frontend.
+// O frontend só vê um token como /api/img/7f3a9c2b — sem rastro do fornecedor.
+
+const IMG_TOKEN_SECRET = process.env.IMG_TOKEN_SECRET || 'wenye-img-secret-2024';
+const IMG_ALGORITHM = 'aes-256-cbc';
+const IMG_KEY = crypto.scryptSync(IMG_TOKEN_SECRET, 'salt-wenye', 32);
+
+function encryptUrl(url) {
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv(IMG_ALGORITHM, IMG_KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(url, 'utf8'), cipher.final()]);
+  return iv.toString('hex') + ':' + encrypted.toString('hex');
+}
+
+function decryptToken(token) {
+  try {
+    const [ivHex, encHex] = token.split(':');
+    if (!ivHex || !encHex) return null;
+    const iv = Buffer.from(ivHex, 'hex');
+    const encrypted = Buffer.from(encHex, 'hex');
+    const decipher = crypto.createDecipheriv(IMG_ALGORITHM, IMG_KEY, iv);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
+  } catch {
+    return null;
   }
 }
 
 // ── Rota /api/image ───────────────────────────────────────────────────────────
-// Capas  → redirect para Cloudinary CDN (WebP automático)
-// Fotos internas → proxy direto do Yupoo
+// Capas  → redirect para Cloudinary CDN (WebP automático, via URL já pronta no catálogo)
+// Fotos internas → o catálogo entrega token opaco; servidor descriptografa e faz proxy
 app.get('/api/image', (req, res) => {
   const url = req.query.url;
   if (!url || !url.startsWith('http')) return res.status(400).send('URL inválida');
-
-  const isCover = coverUrls.has(url);
-
-  if (isCover) {
-    const publicId = urlToPublicId(url);
-    return res.redirect(301, cloudinaryUrl(publicId));
-  }
-
+  // Rota legada de capas (caso chame com URL direta)
   proxyImageDirect(url, res);
+});
+
+// Nova rota para fotos internas — token opaco, URL do Yupoo nunca exposta
+app.get('/api/img/:token', (req, res) => {
+  const url = decryptToken(req.params.token);
+  if (!url || !url.startsWith('http')) return res.status(400).send('Token inválido');
+  proxyImageDirect(url, res);
+});
+
+// ── Rota para gerar token de uma URL (chamada pelo catálogo/frontend) ──────────
+// Não é pública — só usada internamente para montar as URLs no catálogo
+function toImageToken(url) {
+  return `/api/img/${encryptUrl(url)}`;
+}
+
+app.use(express.static(FRONTEND_DIST));
+
+app.get('*', (req, res) => {
+  res.sendFile(path.join(FRONTEND_DIST, 'index.html'));
 });
 
 // ── Warmup: garante que todas as capas estão no Cloudinary ───────────────────
@@ -533,7 +650,7 @@ app.get('/api/image', (req, res) => {
 // 3. Se já existe no Cloudinary → pula
 async function warmupCache() {
   loadCoverUrls();
-  console.log(`☁️  Verificando ${coverUrls.size} capas no Cloudinary...`);
+  console.log(`☁️  ${coverUrls.size} capas no catálogo. Buscando lista do Cloudinary...`);
 
   if (!CLOUDINARY_API_SECRET) {
     console.warn('⚠️  CLOUDINARY_SECRET não definido — pulando sincronização.');
@@ -541,22 +658,32 @@ async function warmupCache() {
     return;
   }
 
+  // Busca TUDO que já está no Cloudinary de uma vez (sem checar imagem por imagem)
+  const existingInCloud = await fetchExistingInCloudinary();
+  console.log(`☁️  ${existingInCloud.size} imagens já no Cloudinary.`);
+
+  // Filtra só as que faltam
+  // Log exemplo de public_id local para comparar com o do Cloudinary
+  const exemploUrl = [...coverUrls][0];
+  if (exemploUrl) console.log('🔍 Exemplo public_id local:', urlToPublicId(exemploUrl));
+
+  const faltando = [...coverUrls].filter(url => !existingInCloud.has(urlToPublicId(url)));
+
+  if (faltando.length === 0) {
+    console.log('✅ Todas as capas já estão no Cloudinary. Nada a enviar.');
+    return;
+  }
+
+  console.log(`📤 ${faltando.length} capas para enviar...`);
+
   let novas = 0;
   let baixadas = 0;
   let falhas = 0;
-  let done = 0;
 
-  for (const url of coverUrls) {
+  for (const url of faltando) {
     const publicId = urlToPublicId(url);
     const ext = url.includes('.png') ? '.png' : '.jpg';
     const cachePath = path.join(CACHE_DIR, publicId + ext);
-
-    // Já existe no Cloudinary? Pula.
-    const jaExiste = await existsInCloudinary(publicId);
-    if (jaExiste) {
-      done++;
-      continue;
-    }
 
     // Não está no cache local? Baixa do Yupoo primeiro.
     if (!fs.existsSync(cachePath)) {
@@ -566,7 +693,6 @@ async function warmupCache() {
       } catch (e) {
         console.warn(`  ⚠️  Falha ao baixar do Yupoo: ${e.message}`);
         falhas++;
-        done++;
         continue;
       }
     }
@@ -575,14 +701,12 @@ async function warmupCache() {
     try {
       await uploadFileToCloudinary(cachePath, publicId);
       novas++;
-      if (novas % 10 === 0) console.log(`  ☁️  ${novas} enviadas para o Cloudinary...`);
+      if (novas % 10 === 0) console.log(`  ☁️  ${novas}/${faltando.length} enviadas...`);
     } catch (e) {
       console.warn(`  ⚠️  Falha no upload: ${e.message}`);
       falhas++;
     }
 
-    done++;
-    if (done % 50 === 0) console.log(`  ${done}/${coverUrls.size} verificadas...`);
     await new Promise(r => setTimeout(r, 80));
   }
 
@@ -590,8 +714,8 @@ async function warmupCache() {
 }
 
 app.listen(PORT, () => {
-  console.log(`\n🚀 Wenye Jerseys API rodando em http://localhost:${PORT}`);
+  console.log(`🚀 Wenye Jerseys API rodando na porta ${PORT}`);
   console.log(`📁 Lendo dados de: ${DATA_ROOT}`);
-  console.log(`☁️  Imagens via Cloudinary CDN (WebP automático)`);
+  console.log('☁️  Imagens via Cloudinary CDN (WebP automático)');
   warmupCache();
 });
