@@ -1,7 +1,7 @@
 const BASE_URL =
   window.location.hostname === 'localhost'
-    ? 'http://localhost:3001'
-    : 'https://bresolinjerseys.onrender.com';
+    ? 'http://localhost:3001/api'
+    : 'https://bresolinjerseys.onrender.com/api';
 
 async function get(path) {
   const res = await fetch(`${BASE_URL}${path}`);
