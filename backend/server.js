@@ -113,84 +113,16 @@ function readDirectory(dirPath) {
   }
 }
 
-// ─── PERSISTÊNCIA DA ORDENAÇÃO ────────────────────────────────────────────────
-// Problema: a ordenação por data de modificação (mtime) funciona no localhost,
-// mas quando o projeto é enviado pro GitHub e clonado no Render, o Git NÃO
-// preserva o mtime original dos arquivos — todos ficam com a data do checkout,
-// embaralhando a ordem. A solução é: na primeira vez que uma pasta é lida,
-// gravamos a ordem atual (calculada por mtime, que aqui ainda está correta)
-// num arquivo .order-manifest.json. Da próxima vez (inclusive no Render),
-// usamos essa ordem salva em vez do mtime, então ela nunca mais muda sozinha.
-const ORDER_MANIFEST_PATH = path.join(DATA_ROOT, '.order-manifest.json');
-let orderManifest = null;
-let orderManifestDirty = false;
-
-function loadOrderManifestFromDisk() {
-  if (orderManifest) return orderManifest;
-  try {
-    orderManifest = JSON.parse(fs.readFileSync(ORDER_MANIFEST_PATH, 'utf-8'));
-  } catch {
-    orderManifest = {};
-  }
-  return orderManifest;
-}
-
-function saveOrderManifestToDisk() {
-  if (!orderManifestDirty) return;
-  try {
-    fs.writeFileSync(ORDER_MANIFEST_PATH, JSON.stringify(orderManifest, null, 2));
-    orderManifestDirty = false;
-  } catch (e) {
-    console.warn('⚠️  Não foi possível salvar .order-manifest.json:', e.message);
-  }
-}
-
-function getOrderKey(dirPath) {
-  return path.relative(DATA_ROOT, dirPath).split(path.sep).join('/');
-}
-
 function readDirectoryByDate(dirPath) {
   try {
-    const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+    return fs.readdirSync(dirPath, { withFileTypes: true })
       .filter(e => e.isDirectory() && e.name !== '.image-cache')
       .map(e => {
         const fullPath = path.join(dirPath, e.name);
         const stat = fs.statSync(fullPath);
         return { name: e.name, fullPath, mtime: stat.mtimeMs };
       })
-      .sort((a, b) => b.mtime - a.mtime); // fallback: mais recentes primeiro
-
-    const manifest = loadOrderManifestFromDisk();
-    const key = getOrderKey(dirPath);
-    const savedOrder = manifest[key];
-
-    if (savedOrder && savedOrder.length) {
-      const remaining = new Map(entries.map(e => [e.name, e]));
-      const ordered = [];
-      for (const name of savedOrder) {
-        const entry = remaining.get(name);
-        if (entry) {
-          ordered.push(entry);
-          remaining.delete(name);
-        }
-      }
-      // Produtos novos (ainda não salvos no manifest) entram no início,
-      // ordenados por data entre si — igual ao comportamento antigo.
-      const newOnes = entries.filter(e => remaining.has(e.name));
-      const finalOrder = [...newOnes, ...ordered];
-
-      if (newOnes.length > 0) {
-        manifest[key] = finalOrder.map(e => e.name);
-        orderManifestDirty = true;
-      }
-
-      return finalOrder;
-    }
-
-    // Primeira leitura desta pasta: grava a ordem atual para preservá-la.
-    manifest[key] = entries.map(e => e.name);
-    orderManifestDirty = true;
-    return entries;
+      .sort((a, b) => b.mtime - a.mtime); // mais antigos primeiro
   } catch {
     return [];
   }
@@ -265,7 +197,6 @@ function buildCatalog() {
     catalog.categories.push(category);
   }
 
-  saveOrderManifestToDisk();
   return catalog;
 }
 
