@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useFetch } from '../hooks/useFetch.js';
 import { api } from '../services/api.js';
@@ -17,6 +17,12 @@ function ImageGallery({ images }) {
   const [active, setActive] = useState(0);
   const [zoomed, setZoomed] = useState(false);
 
+  // ── Estado do swipe (mobile) ────────────────────────────────────────────
+  const wrapperRef = useRef(null);
+  const [dragOffset, setDragOffset] = useState(0);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const touch = useRef({ startX: 0, currentX: 0, dragging: false, moved: false }).current;
+
   useEffect(() => setActive(0), [images]);
 
   function prev() {
@@ -25,6 +31,59 @@ function ImageGallery({ images }) {
 
   function next() {
     setActive((v) => (v === images.length - 1 ? 0 : v + 1));
+  }
+
+  const prevIndex = images.length > 1 ? (active === 0 ? images.length - 1 : active - 1) : active;
+  const nextIndex = images.length > 1 ? (active === images.length - 1 ? 0 : active + 1) : active;
+
+  // ── Handlers de arrasto (só disparam em telas touch) ────────────────────
+  function handleTouchStart(e) {
+    if (images.length <= 1) return;
+    touch.startX = e.touches[0].clientX;
+    touch.currentX = touch.startX;
+    touch.dragging = true;
+    touch.moved = false;
+    setIsAnimating(false);
+  }
+
+  function handleTouchMove(e) {
+    if (!touch.dragging) return;
+    touch.currentX = e.touches[0].clientX;
+    const delta = touch.currentX - touch.startX;
+    if (Math.abs(delta) > 6) touch.moved = true;
+    setDragOffset(delta);
+  }
+
+  function handleTouchEnd() {
+    if (!touch.dragging) return;
+    touch.dragging = false;
+
+    const delta = touch.currentX - touch.startX;
+    const width = wrapperRef.current?.offsetWidth || 1;
+    const threshold = Math.max(45, width * 0.15);
+
+    setIsAnimating(true);
+
+    if (Math.abs(delta) > threshold) {
+      const direction = delta < 0 ? 1 : -1;
+      setDragOffset(direction * width);
+      setTimeout(() => {
+        if (direction === 1) next(); else prev();
+        setIsAnimating(false);
+        setDragOffset(0);
+      }, 260);
+    } else {
+      setDragOffset(0);
+      setTimeout(() => setIsAnimating(false), 260);
+    }
+  }
+
+  function handleImageClick() {
+    if (touch.moved) {
+      touch.moved = false;
+      return;
+    }
+    setZoomed(true);
   }
 
   // Keyboard navigation
@@ -106,22 +165,40 @@ function ImageGallery({ images }) {
         {/* Main image */}
         <div className="relative rounded-2xl overflow-hidden bg-dark-800 group">
           <div
-            className="aspect-square cursor-zoom-in"
-            onClick={() => setZoomed(true)}
+            ref={wrapperRef}
+            className="aspect-square relative overflow-hidden cursor-zoom-in"
+            onClick={handleImageClick}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
           >
-            <ProductImage
-              src={images[active]}
-              alt="Produto"
-              className="w-full h-full"
-            />
+            {/* Trilho de 3 slides (anterior / atual / próximo) para o arrasto infinito no mobile */}
+            <div
+              className="flex h-full touch-pan-y"
+              style={{
+                width: '300%',
+                transform: `translate3d(calc(-33.3334% + ${dragOffset}px), 0, 0)`,
+                transition: isAnimating ? 'transform 260ms cubic-bezier(0.22, 1, 0.36, 1)' : 'none',
+              }}
+            >
+              <div style={{ width: '33.3333%' }} className="h-full flex-shrink-0">
+                <ProductImage src={images[prevIndex]} alt="Produto" className="w-full h-full" />
+              </div>
+              <div style={{ width: '33.3333%' }} className="h-full flex-shrink-0">
+                <ProductImage src={images[active]} alt="Produto" className="w-full h-full" />
+              </div>
+              <div style={{ width: '33.3333%' }} className="h-full flex-shrink-0">
+                <ProductImage src={images[nextIndex]} alt="Produto" className="w-full h-full" />
+              </div>
+            </div>
           </div>
 
-          {/* Arrow controls */}
+          {/* Arrow controls — desktop apenas (hover). No mobile a navegação é por arrasto. */}
           {images.length > 1 && (
             <>
               <button
                 onClick={prev}
-                className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/60 hover:bg-black/80 flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all duration-200 hover:scale-110"
+                className="hidden sm:flex absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/60 hover:bg-black/80 items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all duration-200 hover:scale-110"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
@@ -129,7 +206,7 @@ function ImageGallery({ images }) {
               </button>
               <button
                 onClick={next}
-                className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/60 hover:bg-black/80 flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all duration-200 hover:scale-110"
+                className="hidden sm:flex absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/60 hover:bg-black/80 items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all duration-200 hover:scale-110"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
@@ -138,9 +215,23 @@ function ImageGallery({ images }) {
             </>
           )}
 
-          {/* Counter badge */}
+          {/* Dots de progresso — mobile apenas, feedback do arrasto */}
           {images.length > 1 && (
-            <div className="absolute bottom-3 right-3 px-2.5 py-1 rounded-full bg-black/60 text-xs text-white font-medium">
+            <div className="sm:hidden absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-black/50">
+              {images.map((_, i) => (
+                <span
+                  key={i}
+                  className={`rounded-full transition-all duration-200 ${
+                    i === active ? 'w-4 h-1.5 bg-white' : 'w-1.5 h-1.5 bg-white/40'
+                  }`}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Counter badge — desktop apenas (no mobile os dots já indicam a posição) */}
+          {images.length > 1 && (
+            <div className="hidden sm:block absolute bottom-3 right-3 px-2.5 py-1 rounded-full bg-black/60 text-xs text-white font-medium">
               {active + 1} / {images.length}
             </div>
           )}
