@@ -19,7 +19,7 @@ app.use(cors());
 app.use(express.json());
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-const DATA_ROOT = process.env.DATA_PATH || './Wenye Jerseys';
+const DATA_ROOT = process.env.DATA_PATH || path.join(__dirname, '../Wenye Jerseys');
 // ─── CLOUDINARY CONFIG ───────────────────────────────────────────────────────
 const CLOUDINARY_CLOUD = 'dt9t6mgbn';
 const CLOUDINARY_API_KEY = '376977982193685';
@@ -113,16 +113,101 @@ function readDirectory(dirPath) {
   }
 }
 
+// ─── ORDER INDEX ─────────────────────────────────────────────────────────────
+// Quando rodando localmente, as datas reais das pastas são usadas para ordenar
+// e um arquivo order.json é gerado/atualizado automaticamente.
+// No Render (e outros ambientes sem mtime confiável), esse arquivo é lido.
+const ORDER_FILE = path.join(DATA_ROOT, 'order.json');
+
+/** Lê o índice de ordem salvo, ou retorna objeto vazio */
+function readOrderIndex() {
+  try {
+    if (fs.existsSync(ORDER_FILE)) {
+      return JSON.parse(fs.readFileSync(ORDER_FILE, 'utf-8'));
+    }
+  } catch {}
+  return {};
+}
+
+/** Salva o índice de ordem no disco */
+function saveOrderIndex(index) {
+  try {
+    fs.writeFileSync(ORDER_FILE, JSON.stringify(index, null, 2), 'utf-8');
+  } catch (e) {
+    console.warn('⚠️  Não foi possível salvar order.json:', e.message);
+  }
+}
+
+/** Detecta se o mtime do sistema de arquivos é confiável.
+ *  No Render/GitHub o clone zera todos os mtimes para a mesma data,
+ *  então todos os itens teriam mtime igual — indicador de ambiente não confiável. */
+function detectMtimeReliable(dirPath) {
+  try {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+      .filter(e => e.isDirectory() && e.name !== '.image-cache')
+      .slice(0, 10); // amostra
+    if (entries.length < 2) return true;
+    const mtimes = entries.map(e => fs.statSync(path.join(dirPath, e.name)).mtimeMs);
+    const unique = new Set(mtimes);
+    // Se todas as datas forem iguais, mtime não é confiável
+    return unique.size > 1;
+  } catch {
+    return false;
+  }
+}
+
+let _mtimeReliable = null;
+function isMtimeReliable() {
+  if (_mtimeReliable === null) {
+    _mtimeReliable = detectMtimeReliable(DATA_ROOT);
+    if (!_mtimeReliable) {
+      console.log('📋 mtime não confiável (ambiente de deploy). Usando order.json para ordenação.');
+    } else {
+      console.log('📋 mtime confiável (ambiente local). Ordenando por data real das pastas.');
+    }
+  }
+  return _mtimeReliable;
+}
+
 function readDirectoryByDate(dirPath) {
   try {
-    return fs.readdirSync(dirPath, { withFileTypes: true })
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true })
       .filter(e => e.isDirectory() && e.name !== '.image-cache')
       .map(e => {
         const fullPath = path.join(dirPath, e.name);
         const stat = fs.statSync(fullPath);
         return { name: e.name, fullPath, mtime: stat.mtimeMs };
-      })
-      .sort((a, b) => b.mtime - a.mtime); // mais antigos primeiro
+      });
+
+    if (isMtimeReliable()) {
+      // Local: ordena pelo mtime real e atualiza o índice salvo
+      const sorted = entries.sort((a, b) => b.mtime - a.mtime);
+      // Atualiza order.json com a ordem atual
+      const index = readOrderIndex();
+      const key = path.relative(DATA_ROOT, dirPath);
+      index[key] = sorted.map(e => e.name);
+      saveOrderIndex(index);
+      return sorted;
+    } else {
+      // Deploy (Render/GitHub): usa order.json salvo
+      const index = readOrderIndex();
+      const key = path.relative(DATA_ROOT, dirPath);
+      const savedOrder = index[key];
+      if (savedOrder && savedOrder.length > 0) {
+        const byName = Object.fromEntries(entries.map(e => [e.name, e]));
+        const ordered = savedOrder
+          .filter(name => byName[name])
+          .map(name => byName[name]);
+        // Adiciona no fim qualquer entrada nova que não estava no índice
+        const inIndex = new Set(savedOrder);
+        for (const e of entries) {
+          if (!inIndex.has(e.name)) ordered.push(e);
+        }
+        return ordered;
+      }
+      // Fallback: sem índice, retorna como está
+      return entries;
+    }
   } catch {
     return [];
   }
