@@ -5,6 +5,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 
+
+
+const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const FRONTEND_DIST = path.join(__dirname, '../frontend/dist');
@@ -14,8 +17,6 @@ app.use(express.static(FRONTEND_DIST));
 app.get('*', (req, res) => {
   res.sendFile(path.join(FRONTEND_DIST, 'index.html'));
 });
-
-const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
